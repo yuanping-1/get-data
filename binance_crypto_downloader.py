@@ -183,32 +183,50 @@ class BinanceCryptoDownloaderV2:
         
         coin_name = symbol.replace('/', '')
         date_str = datetime.now().strftime('%Y%m%d')
-        filename = f"{coin_name}_{timeframe.upper()}_Binance_{date_str}.csv"
+        window_tag = start_date.replace('-', '')
+        if end_date:
+            window_tag = f"{window_tag}_{end_date.replace('-', '')}"
+        filename = f"{coin_name}_{timeframe.upper()}_{window_tag}_Binance_{date_str}.csv"
         
         return self.save_data(df, filename)
     
-    def batch_download(self, symbols, start_date, end_date=None, timeframe='4h'):
-        """批量下载"""
+    def batch_download(self, symbols, windows, timeframes):
+        """批量下载（支持多个时间窗口和多个时间周期）"""
+        total_jobs = len(symbols) * len(windows) * len(timeframes)
+
         print(f"\n{'='*60}")
         print(f"批量下载 {len(symbols)} 个加密货币")
+        print(f"时间窗口数量: {len(windows)}")
+        print(f"时间周期数量: {len(timeframes)}")
+        print(f"总任务数: {total_jobs}")
         print(f"{'='*60}")
         
         results = []
-        
-        for i, symbol in enumerate(symbols, 1):
-            print(f"\n[{i}/{len(symbols)}] 正在处理 {symbol}")
-            print("-" * 60)
-            
-            success = self.download_and_save(symbol, start_date, end_date, timeframe)
-            
-            results.append({
-                'symbol': symbol,
-                'status': 'success' if success else 'failed'
-            })
-            
-            if i < len(symbols):
-                print(f"\n⏸️ 准备下载下一个币种...")
-                time.sleep(2)
+
+        job_index = 0
+        for symbol in symbols:
+            for timeframe in timeframes:
+                for start_date, end_date in windows:
+                    job_index += 1
+                    print(
+                        f"\n[{job_index}/{total_jobs}] 处理 {symbol} | "
+                        f"周期 {timeframe} | 时间 {start_date} 至 {end_date}"
+                    )
+                    print("-" * 60)
+
+                    success = self.download_and_save(symbol, start_date, end_date, timeframe)
+
+                    results.append({
+                        'symbol': symbol,
+                        'timeframe': timeframe,
+                        'start_date': start_date,
+                        'end_date': end_date,
+                        'status': 'success' if success else 'failed'
+                    })
+
+                    if job_index < total_jobs:
+                        print(f"\n⏸️ 准备下载下一个任务...")
+                        time.sleep(1)
         
         # 汇总
         print(f"\n{'='*60}")
@@ -222,7 +240,10 @@ class BinanceCryptoDownloaderV2:
         print("\n详细结果:")
         for result in results:
             emoji = "✅" if result['status'] == 'success' else "❌"
-            print(f"{emoji} {result['symbol']}: {result['status']}")
+            print(
+                f"{emoji} {result['symbol']} | {result['timeframe']} | "
+                f"{result['start_date']}~{result['end_date']}: {result['status']}"
+            )
         
         return results
 
@@ -236,6 +257,7 @@ def main():
     print("✅ 自动重试机制")
     print("✅ 网络容错")
     print("✅ 多种连接方式")
+    print("✅ 支持多个时间窗口和多个时间周期")
     print()
     
     # 初始化
@@ -252,28 +274,52 @@ def main():
     
     print("\n目标币种: BTC, ETH, XRP, SOL, DOGE")
     
-    # 时间范围（使用更保守的设置）
-    print("\n推荐时间范围:")
-    print("1. 最近 1 年 - 快速下载 ⭐")
-    print("2. 最近 2 年 - 推荐")
-    print("3. 最近 3 年 - 完整数据")
-    
-    choice = input("\n选择 (1-3, 默认=1): ").strip() or '1'
-    
+    # 时间范围
+    print("\n可设置多个时间窗口，格式: 开始日期~结束日期,开始日期~结束日期")
+    print("例如: 2024-01-01~2024-06-30,2024-07-01~2024-12-31")
+
     today = datetime.now().strftime('%Y-%m-%d')
-    
-    if choice == '1':
-        start_date = '2024-02-15'
-    elif choice == '2':
-        start_date = '2023-02-15'
+
+    windows_input = input(
+        f"\n输入时间窗口(默认=2024-02-15~{today}): "
+    ).strip()
+    if not windows_input:
+        windows = [('2024-02-15', today)]
     else:
-        start_date = '2022-02-15'
-    
-    end_date = today
-    
-    print(f"\n时间范围: {start_date} 至 {end_date}")
-    print("时间周期: 4h")
-    
+        windows = []
+        for item in windows_input.split(','):
+            item = item.strip()
+            if not item:
+                continue
+
+            if '~' in item:
+                start_date, end_date = [part.strip() for part in item.split('~', 1)]
+            else:
+                start_date, end_date = item, today
+
+            if not start_date:
+                continue
+            windows.append((start_date, end_date or today))
+
+    if not windows:
+        print("❌ 未提供有效时间窗口")
+        return
+
+    print("\n可设置多个时间周期，格式: 1h,4h,1d")
+    timeframes_input = input("输入时间周期(默认=4h): ").strip()
+    if not timeframes_input:
+        timeframes = ['4h']
+    else:
+        timeframes = [item.strip() for item in timeframes_input.split(',') if item.strip()]
+
+    if not timeframes:
+        print("❌ 未提供有效时间周期")
+        return
+
+    print("\n将下载以下配置:")
+    print(f"时间窗口: {windows}")
+    print(f"时间周期: {timeframes}")
+
     confirm = input("\n确认开始下载? (y/n): ").strip().lower()
     
     if confirm != 'y':
@@ -282,7 +328,7 @@ def main():
     
     # 开始下载
     start_time = time.time()
-    results = downloader.batch_download(target_symbols, start_date, end_date, '4h')
+    results = downloader.batch_download(target_symbols, windows, timeframes)
     elapsed = time.time() - start_time
     
     print(f"\n{'='*60}")
